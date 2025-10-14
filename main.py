@@ -16,7 +16,7 @@ c = (3 * 10 ** 8 ) * m / s
 
 simulation = True
 
-N = 1000 # I'm not sure this is the correct resolution
+N = 2048 # I'm not sure this is the correct resolution
 lamb = np.linspace(190, 1100, N) * nm # Range comes from the flame spectrometer and may need to be adjusted
 
 w_min = 2 * np.pi * c / lamb.max()
@@ -26,7 +26,9 @@ w = np.linspace(w_min, w_max, N)
 
 # Use simulated data
 if simulation:
-    pass
+    EX = 0
+    EF = 0
+    EA = 0
 
 # Read in critical data
 else:
