@@ -8,6 +8,30 @@ from scipy.interpolate import RegularGridInterpolator
 import numpy as np
 import numpy.fft as nfft
 from scipy.interpolate import RegularGridInterpolator
+from scipy.signal import savgol_filter
+
+
+# Defines scaling
+nm = 1e-9
+us = 1e-6
+mm = 1e-3
+cm = 1e-2
+m = 1
+
+# Constants
+χ3 = 1.59 * 1e-22 # At 532nm
+σ = -1.15
+λ = 800 * nm
+n0 = 1.4704 # 800nm
+
+β = np.pi / 8
+
+γ0 = 6 * np.pi / (8 * λ * n0)
+γ1 = γ0 * (1 - (σ / 2) * np.sin(2 * β) ** 2)
+γ2 = -γ0 * (σ / 4) * np.sin(4 * β)
+
+c = 3e8
+
 
 def ft(a):
     """Centered 1D FFT of a (already sampled on a uniform grid)."""
@@ -49,34 +73,7 @@ def compute_error(retrieved, measured, x, y = None):
         epsilon = simpson(diff, x = x, axis = -1)
         epsilon = simpson(epsilon, x = y, axis = -1)
 
-    return epsilon
-
-def polarizer(E_field, polarization = "", theta = None):
-    
-    if polarization.lower() == "horizontal":
-        P = np.array([
-            [1, 0],
-            [0, 0]
-        ])
-
-    elif polarization.lower == "vertical":
-        P = np.array([
-            [0, 0],
-            [0, 1]
-        ])
-
-    elif polarization == "" and theta is not None:
-        P = np.array([
-            [np.cos(theta) ** 2, np.cos(theta) * np.sin(theta)],
-            [np.cos(theta) * np.sin(theta), np.sin(theta) ** 2]
-        ])
-
-    else:
-        P = np.eye(2)
-
-    E_polarized = P @ E_field
-    
-    return E_polarized
+    return epsilon / len(x) ** 2
 
 def ft(A):
     return fftshift(fft(ifftshift(A)))
@@ -90,14 +87,25 @@ def B_integral(I, n, lamb):
     result = 2 * np.pi * result / lamb
     return result
 
-def xpw(E, L = None): # Figure out crystal length
-    pass
+def xpw(A, L = 2 * mm): # Figure out crystal length
+    I = np.abs(A) ** 2
+    phase = γ1 * I * L
+    A_new = A * np.exp(-1j * phase)
+    B = A * (γ2 / γ1) * (np.exp(-1j * phase) - 1)
+
+    φX = np.unwrap(np.angle(B))
+
+    return B, φX
+    
 
 def compute_xpw(AF, φF):
     EF = ift(AF * np.exp(1j * φF))
-    φX = np.unwrap(np.angle(ft(xpw(EF))))
 
-    pass
+    EX, φX = xpw(EF)
+    φX = np.unwrap(np.angle(ft(EX)))
+
+    return EF, φX
+
 
 def compute_rms(φF, φX, φAC, ω):
     φACR = φF - φX
@@ -110,25 +118,53 @@ def improve_f_wave(φAC, φX):
     
     return φF
 
-def phase_correction(AF_compute, φF_compute, φAC, ω):
-    ε_new = np.inf
-    ε_old = np.inf
-    
-    while  ε_new >= ε_old:
-        EX, φX = compute_xpw(AF_compute, φF_compute)
-        
-        ε_old = ε_new
-        ε_new = compute_rms(φF_compute, φX, φAC, ω)
+def λ2ω(A, λ):
+    ω = 2 * np.pi * c / λ
+    idx = np.argsort(ω)
+    A_new = A[idx]
 
-        if ε_new > ε_old:
-            φF = improve_f_wave(φAC, φX)
+    return ω[idx], A_new
 
-    return EX, φF
+def smooth_phase(phi):
+    return savgol_filter(phi, 51, 3)
 
-def amplitude_correction(AX, IAC):
-    AF = IAC / AX
+def phase_correction(AF, φF, φAC, ω, IAC, β=0.01):
+    EX, φX = compute_xpw(AF, φF)
+    error_phase = φAC - φX
 
-    return AF
+    target = np.sqrt(IAC)
+    thresh = 0.05 * np.max(target)
+    reliable = target > thresh
+
+    φF_new = φF.copy()
+    φF_new = φF + β * error_phase
+
+    # ---- Fix A: smooth the phase ----
+    φF_new = np.unwrap(smooth_phase(φF_new))
+
+    return EX, φF_new
+
+
+def amplitude_correction(AF, AX, IAC, α=0.05, eps=1e-12, clip=3.0):
+    target = np.sqrt(IAC)
+    thresh = 0.05 * np.max(target)
+    reliable = target > thresh
+
+    AF_new = AF.copy()
+
+    denom = AX * np.abs(AF) + eps
+    correction = (target / denom) ** α
+
+    # clip correction (prevents blowup)
+    correction = np.clip(correction, 1.0/clip, clip)
+
+    AF_new[reliable] = AF[reliable] * correction[reliable]
+
+    # Optionally slightly dampen wings:
+    AF_new[~reliable] *= 0.95
+
+    return AF_new
+
 
 
 
