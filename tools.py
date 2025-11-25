@@ -87,24 +87,47 @@ def B_integral(I, n, lamb):
     result = 2 * np.pi * result / lamb
     return result
 
-def xpw(A, L = 2 * mm): # Figure out crystal length
-    I = np.abs(A) ** 2
-    phase = γ1 * I * L
-    A_new = A * np.exp(-1j * phase)
-    B = A * (γ2 / γ1) * (np.exp(-1j * phase) - 1)
+# def xpw(A, L = 2 * mm): # Figure out crystal length
+#     I = np.abs(A) ** 2
+#     phase = γ1 * I * L
+#     A_new = A * np.exp(-1j * phase)
+#     B = A * (γ2 / γ1) * (np.exp(-1j * phase) - 1)
 
-    φX = np.unwrap(np.angle(B))
+#     φX = np.unwrap(np.angle(B))
 
-    return B, φX
+#     return B, φX
     
+def xpw(E, L=2e-3, χ3=1.59e-22, n0=1.4704, theta=np.pi/4, c=3e8):
+    """
+    Cross-polarized wave generation in BaF2 (approximate, isotropic χ(3) model).
+    E  : input field in time
+    """
+    # Nonlinear phase in BaF2 (self-phase)
+    I = np.abs(E)**2
+    k0 = 2*np.pi*n0 / (800e-9)
+    phi = k0 * χ3 * I * L
+
+    # Fundamental with nonlinear phase
+    E_out = E * np.exp(1j * phi)
+
+    # XPW polarization term (dominant odd-order term)
+    EX = (E**3) * np.sin(2*theta) * np.sin(4*theta)
+
+    return E_out, EX
+
+
+# def xpw(A):
+#     # idealized XPW polarization
+#     return A**3, np.unwrap(np.angle(A**3))
 
 def compute_xpw(AF, φF):
     EF = ift(AF * np.exp(1j * φF))
 
     EX, φX = xpw(EF)
+    EXω = ft(EX)
     φX = np.unwrap(np.angle(ft(EX)))
 
-    return EF, φX
+    return EXω, φX
 
 
 def compute_rms(φF, φX, φAC, ω):
@@ -112,6 +135,11 @@ def compute_rms(φF, φX, φAC, ω):
     ε = compute_error(φACR, φAC, x = ω)
 
     return ε
+
+def compute_error2(retrieved, measured):
+    N = len(retrieved)
+    error = np.sum((retrieved - measured) ** 2) / N
+    return error
 
 def improve_f_wave(φAC, φX):
     φF = φAC - φX
@@ -128,89 +156,50 @@ def λ2ω(A, λ):
 def smooth_phase(phi):
     return savgol_filter(phi, 51, 3)
 
-def phase_correction(AF, φF, φAC, ω, IAC, β=0.01):
+def phase_correction(AF, φF, φAC, ω, IAC):
     EX, φX = compute_xpw(AF, φF)
-    error_phase = φAC - φX
+    error_phase = (φAC - φAC[len(φAC) // 2]) - (φX - φX[len(φX) // 2])
+    N = len(ω)
 
-    target = np.sqrt(IAC)
-    thresh = 0.05 * np.max(target)
-    reliable = target > thresh
+    ε0 = np.sum(np.abs(φF - φAC) ** 2) / N
+
+    β = min(0.01, 0.5 * ε0)
+    β = max(β, 1e-4)
 
     φF_new = φF.copy()
     φF_new = φF + β * error_phase
 
-    # ---- Fix A: smooth the phase ----
     φF_new = np.unwrap(smooth_phase(φF_new))
+    ε = np.sum(np.abs((φF_new - φF_new[len(φF_new) // 2]) - (φAC - φAC[len(φAC) // 2])) ** 2) / N
 
-    return EX, φF_new
+    return EX, φF_new, ε
 
 
-def amplitude_correction(AF, AX, IAC, α=0.05, eps=1e-12, clip=3.0):
-    target = np.sqrt(IAC)
-    thresh = 0.05 * np.max(target)
-    reliable = target > thresh
+def amplitude_correction(AF, AX, IAC, α=0.3, eps=1e-12, clip=3.0):
+    """
+    Amplitude update based on AC amplitude:
+        target ≈ |AF| * AX
 
-    AF_new = AF.copy()
+    AF : current fundamental spectrum (complex)
+    AX : current XPW amplitude (real, >= 0)
+    IAC: measured |AC|^2 (i.e. |I_chop|)
+    α  : damping exponent (0 < α <= 1)
+    """
+    # Measured AC amplitude
+    target = np.sqrt(IAC)              # AAC
 
-    denom = AX * np.abs(AF) + eps
-    correction = (target / denom) ** α
+    # Current model AC amplitude
+    product = np.abs(AF) * AX + eps
 
-    # clip correction (prevents blowup)
-    correction = np.clip(correction, 1.0/clip, clip)
+    # Ratio between measured and model AC
+    ratio = target / product           # want product * ratio → target
 
-    AF_new[reliable] = AF[reliable] * correction[reliable]
+    # Damped update: AF_new = AF * ratio^α
+    corr = ratio ** α
 
-    # Optionally slightly dampen wings:
-    AF_new[~reliable] *= 0.95
+    # Optional clipping for stability
+    corr = np.clip(corr, 1.0/clip, clip)
+
+    AF_new = AF * corr
 
     return AF_new
-
-
-
-
-if __name__ == "__main__":
-    m = 1e3
-    mm = 1
-    μm = 1e-3
-    nm = 1e-6
-
-    σx = 1.0 * mm
-    σy = 1.0 * mm 
-    λ = 808 * nm            # wavelength (arbitrary units)
-    zRx = np.pi * σx**2 / λ
-    zRy = np.pi * σy**2 / λ
-
-    x = np.linspace(-5 * mm, 5 * mm, 300)
-    y = np.linspace(-5 * mm, 5 * mm, 300)
-    z = np.linspace(-10, 10, 200)
-    X, Y, Z = np.meshgrid(x, y, z, indexing='ij')
-
-    # Gaussian beam intensity
-    wx = σx * np.sqrt(1 + (Z / zRx)**2)
-    wy = σy * np.sqrt(1 + (Z / zRy) ** 2)
-    I = np.exp(-2 * X**2 / wx**2) * np.exp(-2 * Y**2 / wy**2)
-
-    # Take central slices through the beam
-    mid_y = len(y) // 2
-    mid_x = len(x) // 2
-
-    Ixz = I[:, mid_y, :]  # x–z plane (y fixed)
-    Iyz = I[mid_x, :, :]  # y–z plane (x fixed)
-
-    # Create plots
-    fig, ax = plt.subplots(1, 2, figsize=(10, 4))
-
-    im0 = ax[0].pcolormesh(x, z, Ixz.T, shading='auto', cmap='plasma')
-    ax[0].set_xlabel('x')
-    ax[0].set_ylabel('z')
-    ax[0].set_title('Gaussian Beam (x–z plane)')
-    fig.colorbar(im0, ax=ax[0], label='Intensity')
-
-    im1 = ax[1].pcolormesh(y, z, Iyz.T, shading='auto', cmap='plasma')
-    ax[1].set_xlabel('y')
-    ax[1].set_ylabel('z')
-    ax[1].set_title('Gaussian Beam (y–z plane)')
-    fig.colorbar(im1, ax=ax[1], label='Intensity')
-
-    plt.tight_layout()
-    plt.show()
