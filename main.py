@@ -87,12 +87,18 @@ if simulation:
 else:
     xpw_df = pd.read_excel("measurement_1_xpw.xlsx")
     reference_df = pd.read_excel("measurement_1_reference.xlsx")
-    combined_df = pd.read_excel("measurement_1_combined.xlsx")
+    combined_df = pd.read_excel("measurement_2_combined.xlsx")
+    dark_df = pd.read_excel("dark.xlsx")
 
     lamb = xpw_df["Wavelength"].to_numpy() * nm
     IX = xpw_df["Intensity"].to_numpy()
     IF = reference_df["Intensity"].to_numpy()
     I = combined_df["Intensity"].to_numpy()
+    I_dark = dark_df["Intensity"].to_numpy()
+
+    IX = IX - I_dark
+    IF = IF - I_dark
+    I = I - I_dark
 
     fig, ax = plt.subplots(1)
     ax.plot(lamb / nm, IX, label = "XPW")
@@ -113,6 +119,7 @@ else:
 
     ω = 2 * np.pi * c / lamb
     AF = np.sqrt(IF)
+    AX = np.sqrt(IX)
 
 # Generate initial guess
 I_hat = tools.ft(I)
@@ -128,7 +135,6 @@ plt.subplots_adjust(bottom=0.25)  # Leave space for sliders
 (line,) = ax.plot(t, I_abs, lw=1.2)
 (vlower,) = ax.plot([lower_init, lower_init], [0, 1], 'r--', lw=1)
 (vupper,) = ax.plot([upper_init, upper_init], [0, 1], 'r--', lw=1)
-ax.set_xlim(-0.75e-13, 0.75e-13)
 ax.set_xlabel("t")
 ax.set_ylabel("|I| (a.u.)")
 ax.set_title("Intensity")
@@ -195,7 +201,7 @@ if debug:
 
 # Iteration parameters
 tol = 1e-5
-phase_tol = 1e-2
+phase_tol = 1e-3
 max_iter = 1000
 ε_amplitude_new = np.inf
 ε_amplitude_old = np.inf
@@ -233,11 +239,11 @@ fig_iter, ax_iter = plt.subplots(1, 2)
 (line_φF_compute,)  = ax_iter[1].plot(ω, φF_compute - φF_compute[len(φF_compute) // 2], label="Numerical")
 ax_iter[0].set_ylim(0, 1.2 * max(AF.max(), AF_compute.max()))
 ax_iter[0].legend()
-ax_iter[0].set_title("Amplitude Evolution per Iteration")
+ax_iter[0].set_title("Fundamental Amplitude")
 ax_iter[0].set_xlabel("ω (rad/s)")
-ax_iter[0].set_ylabel("Amplitude")
+ax_iter[0].set_ylabel("Fundamental Phase")
 ax_iter[1].legend()
-ax_iter[1].set_title("Phase Evolution per Iteration")
+ax_iter[1].set_title("Phase")
 ax_iter[1].set_xlabel("ω (rad/s)")
 ax_iter[1].set_ylabel(r"$\phi$")
 ax_iter[1].set_ylim(min((φF_compute - φF_compute[len(φF_compute) // 2]).min(), (φAC - φAC[len(φAC) // 2]).min()), 1.2 * max((φF_compute - φF_compute[len(φF_compute) // 2]).max(), (φAC - φAC[len(φAC) // 2]).max()))
@@ -246,9 +252,9 @@ for iteration_count in range(max_iter):
 
     # --- update smoothing schedule
     if iteration_count < max_iter * 0.3:
-        sigma = 2.0
+        sigma = 3.0
     elif iteration_count < max_iter * 0.7:
-        sigma = 1.5
+        sigma = 2.5
     else:
         sigma = 1.0
 
@@ -332,6 +338,17 @@ plt.show()
 fig, ax = plt.subplots(1)
 ax.plot(ω, φAC - φAC[len(φAC) // 2], label = "Original")
 ax.plot(ω, φF_compute - φF_compute[len(φF_compute) // 2], "--", label = "Numerical")
+plt.legend()
+
+plt.show()
+
+
+AF_compute = AF_compute * AF_old.max()
+I_compute = np.abs(AF_compute * np.exp(1j * φF_compute) + AX) ** 2
+
+fig, ax = plt.subplots(1)
+ax.plot(ω, I / I.max(), label = "Original")
+ax.plot(ω, I_compute / I_compute.max(), "--", label = "Numerical")
 plt.legend()
 
 plt.show()
