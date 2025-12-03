@@ -22,7 +22,7 @@ s = 1
 
 c = (3 * 10 ** 8 ) * m / s
 
-simulation = False
+simulation = True
 debug = True
 
 # Use simulated data
@@ -94,7 +94,14 @@ else:
     IX = xpw_df["Intensity"].to_numpy()
     IF = reference_df["Intensity"].to_numpy()
     I = combined_df["Intensity"].to_numpy()
-    I_dark = dark_df["Intensity"].to_numpy()
+    I_dark1 = dark_df["Intensity 1"].to_numpy()
+    I_dark2 = dark_df["Intensity 2"].to_numpy()
+    I_dark3 = dark_df["Intensity 3"].to_numpy()
+    I_dark4 = dark_df["Intensity 4"].to_numpy()
+    I_dark5 = dark_df["Intensity 5"].to_numpy()
+
+    I_dark = I_dark1 + I_dark2 + I_dark3 + I_dark4 + I_dark5
+    I_dark = I_dark / 5
 
     IX = IX - I_dark
     IF = IF - I_dark
@@ -179,6 +186,9 @@ I_hat_chop = np.zeros_like(I_hat)
 I_hat_chop[mask] = I_hat[mask]
 
 I_hat_chop = tools.recenter(I_hat_chop, t)
+cutoff = 4e-15
+gauss = np.exp(-(t ** 2 / (2 * (1.1 * cutoff) ** 2)))
+I_hat_chop = I_hat_chop * gauss
 
 if debug:
     fig, ax = plt.subplots(1)
@@ -213,15 +223,28 @@ AAC = np.sqrt(np.abs(I_chop))
 
 
 # Remove parts of profile that we cannot measure
-ids = np.where(AAC > 0.15 * AAC)
-I_chop = I_chop[ids]
+# AC field (complex) from time-gated interferogram
+IAC_field = I_chop
+
+# AC amplitude and intensity
+AAC = np.abs(IAC_field)       # |AC|
+IAC = AAC**2                  # |AC|^2  (this is what amplitude_correction wants)
+
+φAC = np.unwrap(np.angle(IAC_field))
+
+# Remove low-SNR parts of the profile
+ids = AAC > 0.15 * AAC.max()
+
+IAC_field = IAC_field[ids]
 AAC = AAC[ids]
+IAC = IAC[ids]
 φAC = φAC[ids]
 AF = AF[ids]
-
-AF_old = AF
-AF = AF / AF.max()
 ω = ω[ids]
+AX = AX[ids]
+IF = IF[ids]
+I = I[ids]
+IA = IA[ids]
 
 # Initial guess
 AF_compute = np.max(np.abs(AF)) * np.ones_like(ω)
@@ -266,7 +289,7 @@ for iteration_count in range(max_iter):
     # PHASE UPDATE (always!)
     # -------------------------
     EX, φF_compute, ε_phase_new = tools.phase_correction(
-        AF_compute, φF_compute, φAC, ω, np.abs(I_chop)
+        AF_compute, φF_compute, φAC, ω, np.abs(IAC_field)
     )
 
     # XPW spectrum
@@ -282,7 +305,7 @@ for iteration_count in range(max_iter):
     # amplitude update only after phase has roughly stabilized
     if iteration_count > 10:
         AF_compute = tools.amplitude_correction(
-            AF_compute, AX_compute, np.abs(I_chop),
+            AF_compute, AX_compute, IAC,
             α = amp_weight * 0.1   # damped update
         )
 
@@ -304,7 +327,7 @@ for iteration_count in range(max_iter):
     error_amplitude.append(ε_amplitude_new)
     error_phase.append(ε_phase_new)
 
-    line_AF_compute.set_ydata(AF_compute ** 2)
+    line_AF_compute.set_ydata(AF_compute)
     line_φF_compute.set_ydata(φF_compute - φF_compute[len(φF_compute)//2])
 
     fig_iter.canvas.draw()
@@ -330,7 +353,7 @@ plt.show()
 
 fig, ax = plt.subplots(1)
 ax.plot(ω, AF, label = "Original")
-ax.plot(ω, AF_compute ** 2, "--", label = "Numerical")
+ax.plot(ω, AF_compute ** 3, "--", label = "Numerical")
 plt.legend()
 
 plt.show()
@@ -342,15 +365,37 @@ plt.legend()
 
 plt.show()
 
-
-AF_compute = AF_compute * AF_old.max()
-I_compute = np.abs(AF_compute * np.exp(1j * φF_compute) + AX) ** 2
+AF_compute = AF_compute ** 3
+EF_compute = AF_compute * np.exp(1j * φF_compute)
+IF_compute = np.abs(EF_compute)**2        # reconstructed fundamental intensity
+IX_known   = np.abs(AX)**2                # XPW intensity (known from reference)
+AC_compute = EF_compute * AX * np.exp(1j * ω * τ)
+I_AC_total = 2 * np.real(AC_compute)      # AF AX exp(+iωτ) + AF AX exp(-iωτ)
+I_compute = IF + IX_known + I_AC_total
 
 fig, ax = plt.subplots(1)
-ax.plot(ω, I / I.max(), label = "Original")
+ax.plot(ω, np.abs(I / I.max()), label = "Original")
 ax.plot(ω, I_compute / I_compute.max(), "--", label = "Numerical")
 plt.legend()
 
+plt.show()
+
+# Extract ASE
+IA_retrieved = I - (IF_compute + IX_known + I_AC_total)
+
+A_ASE = np.abs(IA_retrieved)
+
+fig, ax = plt.subplots(1)
+
+
+if simulation:
+    ax.plot(ω, IA, label = "Original")
+    ax.plot(ω, IA_retrieved, "--", label = "Numerical")
+
+else:
+    ax.plot(ω, IA_retrieved)
+
+plt.legend()
 plt.show()
 
 print()
