@@ -122,11 +122,9 @@ def xpw(E, L=2e-3, χ3=1.59e-22, n0=1.4704, theta=np.pi/4, c=3e8):
 
 def compute_xpw(AF, φF):
     EF = ift(AF * np.exp(1j * φF))
-
-    EX, φX = xpw(EF)
-    EXω = ft(EX)
-    φX = np.unwrap(np.angle(ft(EX)))
-
+    EX_t, _ = xpw(EF)
+    EXω = ft(EX_t)
+    φX = np.unwrap(np.angle(EXω))
     return EXω, φX
 
 
@@ -173,6 +171,14 @@ def phase_correction(AF, φF, φAC, ω, IAC):
     ε = np.sum(np.abs((φF_new - φF_new[len(φF_new) // 2]) - (φAC - φAC[len(φAC) // 2])) ** 2) / N
 
     return EX, φF_new, ε
+
+# def amplitude_correction(AF, AX, IAC, μ=0.2, eps=1e-12):
+#     target = np.sqrt(IAC)      # AAC
+#     AF_target = target / (AX + eps)
+
+#     # relaxed update: convex combination
+#     AF_new = (1 - μ) * AF + μ * AF_target
+#     return AF_new
 
 
 def amplitude_correction(AF, AX, IAC, α=0.3, eps=1e-12, clip=3.0):

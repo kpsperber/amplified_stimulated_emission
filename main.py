@@ -53,7 +53,7 @@ if simulation:
 
     ω_sort, AFω = tools.λ2ω(AF, lamb)
     AFt = tools.ift(AFω)
-    AXt, φX = tools.xpw(AFt)
+    AXt, _ = tools.xpw(AFt)
     AXω = tools.ft(AXt)
     _, AX = tools.λ2ω(AXω, ω)
 
@@ -68,14 +68,14 @@ if simulation:
     I = I + noise
 
     fig, ax = plt.subplots(2, 1)
-    ax[0].plot(lamb * 1e6, IF, label = r"$I_F$")
-    ax[0].plot(lamb * 1e6, IA, label = r"$I_A$")
+    ax[0].plot(lamb * 1e9, IF, label = r"$I_F$")
+    ax[0].plot(lamb * 1e9, IA, label = r"$I_A$")
     ax[0].set_xlabel(r"$\lambda$")
     ax[0].set_ylabel(r"I")
     ax[0].legend()
 
-    ax[1].plot(lamb * 1e6, IX, label = r"$I_X$")
-    ax[1].plot(lamb * 1e6, IA + IF, label = r"$I_{FA}$")
+    ax[1].plot(lamb * 1e9, IX, label = r"$I_X$")
+    ax[1].plot(lamb * 1e9, IA + IF, label = r"$I_{FA}$")
     ax[1].set_xlabel(r"$\lambda$")
     ax[1].set_ylabel(r"I")
     ax[1].legend()
@@ -83,11 +83,18 @@ if simulation:
     plt.tight_layout()
     plt.show()
 
+    fig, ax = plt.subplots(1)
+    ax.plot(lamb * 1e9, I)
+    ax.set_xlabel(r"$\lambda$")
+    ax.set_ylabel(r"I")
+
+    plt.show()
+
 # Read in critical data
 else:
-    xpw_df = pd.read_excel("measurement_1_xpw.xlsx")
-    reference_df = pd.read_excel("measurement_1_reference.xlsx")
-    combined_df = pd.read_excel("measurement_2_combined.xlsx")
+    xpw_df = pd.read_excel("")
+    reference_df = pd.read_excel("fringes_no_xpw")
+    combined_df = pd.read_excel("fringes_xpw.xlsx")
     dark_df = pd.read_excel("dark.xlsx")
 
     lamb = xpw_df["Wavelength"].to_numpy() * nm
@@ -186,9 +193,9 @@ I_hat_chop = np.zeros_like(I_hat)
 I_hat_chop[mask] = I_hat[mask]
 
 I_hat_chop = tools.recenter(I_hat_chop, t)
-cutoff = 4e-15
-gauss = np.exp(-(t ** 2 / (2 * (1.1 * cutoff) ** 2)))
-I_hat_chop = I_hat_chop * gauss
+# cutoff = 4e-15
+# gauss = np.exp(-(t ** 2 / (2 * (1.1 * cutoff) ** 2)))
+# I_hat_chop = I_hat_chop * gauss
 
 if debug:
     fig, ax = plt.subplots(1)
@@ -233,7 +240,7 @@ IAC = AAC**2                  # |AC|^2  (this is what amplitude_correction wants
 φAC = np.unwrap(np.angle(IAC_field))
 
 # Remove low-SNR parts of the profile
-ids = AAC > 0.15 * AAC.max()
+ids = AAC > 0.05 * AAC.max()
 
 IAC_field = IAC_field[ids]
 AAC = AAC[ids]
@@ -245,9 +252,10 @@ AX = AX[ids]
 IF = IF[ids]
 I = I[ids]
 IA = IA[ids]
+IX = IX[ids]
 
 # Initial guess
-AF_compute = np.max(np.abs(AF)) * np.ones_like(ω)
+AF_compute = np.abs(IAC) ** 0.5
 φF_compute = np.zeros_like(ω)
 
 
@@ -273,16 +281,10 @@ ax_iter[1].set_ylim(min((φF_compute - φF_compute[len(φF_compute) // 2]).min()
 
 for iteration_count in range(max_iter):
 
-    # --- update smoothing schedule
-    if iteration_count < max_iter * 0.3:
-        sigma = 3.0
-    elif iteration_count < max_iter * 0.7:
-        sigma = 2.5
-    else:
-        sigma = 1.0
+
 
     # --- adaptive mixing (phase dominant early, amplitude later)
-    phase_weight = np.exp(-iteration_count / 50)
+    phase_weight = np.exp(-iteration_count / 150)
     amp_weight   = 1.0 - phase_weight  # starts small, grows later
 
     # -------------------------
@@ -304,13 +306,18 @@ for iteration_count in range(max_iter):
 
     # amplitude update only after phase has roughly stabilized
     if iteration_count > 10:
+
+        #AF_compute = tools.amplitude_correction(AF, AX, IAC, μ=0.2, eps=1e-12)
         AF_compute = tools.amplitude_correction(
             AF_compute, AX_compute, IAC,
-            α = amp_weight * 0.1   # damped update
+            α = amp_weight * 0.05   # damped update
         )
 
         # smooth amplitude to avoid oscillations
-        AF_compute = gaussian_filter1d(AF_compute, sigma=sigma)
+    if iteration_count > 10 and iteration_count % 10 == 0:
+        #AF_compute = gaussian_filter1d(AF_compute, sigma=sigma)
+        pass
+
 
     # -------------------------
     # NORMALIZATION
@@ -353,7 +360,7 @@ plt.show()
 
 fig, ax = plt.subplots(1)
 ax.plot(ω, AF, label = "Original")
-ax.plot(ω, AF_compute ** 3, "--", label = "Numerical")
+ax.plot(ω, AF_compute, "--", label = "Numerical")
 plt.legend()
 
 plt.show()
@@ -365,7 +372,7 @@ plt.legend()
 
 plt.show()
 
-AF_compute = AF_compute ** 3
+AF_compute = AF_compute
 EF_compute = AF_compute * np.exp(1j * φF_compute)
 IF_compute = np.abs(EF_compute)**2        # reconstructed fundamental intensity
 IX_known   = np.abs(AX)**2                # XPW intensity (known from reference)
@@ -389,6 +396,7 @@ fig, ax = plt.subplots(1)
 
 
 if simulation:
+    IA = I - (IX + IF + AF * AX * np.exp(1j * (ω * τ)) + AF * AX * np.exp(-1j * (ω * τ)))
     ax.plot(ω, IA, label = "Original")
     ax.plot(ω, IA_retrieved, "--", label = "Numerical")
 
