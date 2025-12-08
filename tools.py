@@ -197,3 +197,26 @@ def amplitude_correction(AF, AX, IAC, α=0.3, eps=1e-12, clip=3.0):
     AF_new = AF * corr
 
     return AF_new
+
+def read_txt(filepath, as_numpy=False, negs_to_zero=False):
+    '''
+    Reads a text file from spectrometer into pandas DataFrame or numpy array.
+
+    Args:
+        filepath (str): Path to the text file.
+        as_numpy (bool): If True, returns data as a 2D numpy array instead of pandas dataframe. Default is False.
+        negs_to_zero (bool): If True, negative intensity values are set to zero. Default is False.
+    
+    Returns:
+        pd.DataFrame or np.ndarray: Spectral data as a pandas DataFrame or a 2D numpy array. If a numpy array is
+            returned, the first row contains wavelengths and the second row contains intensities.
+    '''
+    data = pd.read_csv(filepath, delimiter='\t', skiprows=14, names=['wavelength', 'intensity'], index_col='wavelength')
+    if negs_to_zero:
+        data = data.where(data['intensity'] > 0, 0)
+    if as_numpy:
+        idx = data.index.to_numpy()
+        vals = data['intensity'].to_numpy()
+        print('Returning 2D numpy array. a[0,:] are indexes and a[1,:] are values')
+        return np.stack((idx, vals), axis=0)
+    return data
