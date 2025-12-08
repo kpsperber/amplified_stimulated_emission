@@ -109,10 +109,6 @@ def initial_guess(A, φ, ω, ω0, order=3):
     _, log_sigma_est = gaussian_moment_guess(A, ω)
     params0[0] = log_sigma_est
 
-    fig, ax = plt.subplots(1)
-    ax.plot(ω, φ)
-
-    plt.show()
     phase_params = phase_poly_guess(φ, ω, ω0, order=order)
     params0[1:] = phase_params
 
@@ -273,10 +269,7 @@ if debug:
 
     # Compare phase
     ax[1].plot(ω, φ0, label = "Measured")
-    ax[1].plot(ω, phase(ω, ω0, x0[1:]), label="phase guess")
-    if simulation:
-        φ_true = phase(ω, ω0, true_phase_params)
-        ax[1].plot(ω, φ_true, "--", label="true phase")
+    ax[1].plot(ω, phase(ω, ω0, x0[1:]), "--", label="phase guess")
     ax[1].set_xlabel(r"$\omega$")
     ax[1].set_ylabel(r"$\phi(\omega)$")
     ax[1].legend()
@@ -320,8 +313,22 @@ denom = np.dot(I_coh, I_coh) + 1e-20
 α_coh = num / denom
 
 I_coh_scaled = α_coh * I_coh
-I_ASE = I - I_coh
+I_ASE = I - I_coh_scaled
 A_ASE = np.sqrt(I_ASE)
+
+fig, ax = plt.subplots(1, 2)
+ax[0].plot(ω, Aω_fit)
+ax[0].set_xlabel(r"$\omega$")
+ax[1].plot(ω, φ_fit - φ_fit[N_sample // 2])
+ax[1].set_xlabel(r"$\omega$")
+
+if simulation:
+    ax[0].plot(ω, Aω_true, "--")
+    ax[1].plot(ω, φ_true - φ_true[N_sample // 2], "--")
+
+plt.tight_layout()
+plt.show()
+
 
 fig, ax = plt.subplots(1, 2, figsize=(12, 4))
 fig.suptitle("Coherent vs ASE decomposition")

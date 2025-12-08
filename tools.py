@@ -27,9 +27,8 @@ n0 = 1.4704 # 800nm
 β = np.pi / 8
 
 γ0 = 6 * np.pi / (8 * λ * n0)
-γ1 = γ0 * (1 - (σ / 2) * np.sin(2 * β) ** 2)
-γ2 = -γ0 * (σ / 4) * np.sin(4 * β)
-
+γ_parallel = γ0 * (1 - (σ / 2) * np.sin(2 * β) ** 2)
+γ_perp = -γ0 * (σ / 4) * np.sin(4 * β)
 c = 3e8
 
 
@@ -86,34 +85,23 @@ def B_integral(I, n, lamb):
 
     result = 2 * np.pi * result / lamb
     return result
-
-# def xpw(A, L = 2 * mm): # Figure out crystal length
-#     I = np.abs(A) ** 2
-#     phase = γ1 * I * L
-#     A_new = A * np.exp(-1j * phase)
-#     B = A * (γ2 / γ1) * (np.exp(-1j * phase) - 1)
-
-#     φX = np.unwrap(np.angle(B))
-
-#     return B, φX
-    
-def xpw(E, L=2e-3, χ3=1.59e-22, n0=1.4704, theta=np.pi/4, c=3e8):
+   
+def xpw(E_t, L=2e-3):
     """
-    Cross-polarized wave generation in BaF2 (approximate, isotropic χ(3) model).
-    E  : input field in time
+    XPW in holographic-cut BaF2 (plane-wave, undepleted pump model)
+    E_t : fundamental field vs time (complex)
+    L   : crystal length (m)
+    Returns:
+        EX_t : XPW field vs time
+        EF_t : fundamental after SPM vs time
     """
-    # Nonlinear phase in BaF2 (self-phase)
-    I = np.abs(E)**2
-    k0 = 2*np.pi*n0 / (800e-9)
-    phi = k0 * χ3 * I * L
+    I = np.abs(E_t)**2
+    phase = γ_parallel * I * L               # nonlinear phase shift of FW
 
-    # Fundamental with nonlinear phase
-    E_out = E * np.exp(1j * phi)
+    EF_t = E_t * np.exp(-1j*phase)          # fundamental after SPM
+    EX_t = E_t * (γ_perp/γ_parallel) * (np.exp(-1j*phase) - 1.0)  # XPW
 
-    # XPW polarization term (dominant odd-order term)
-    EX = (E**3) * np.sin(2*theta) * np.sin(4*theta)
-
-    return E_out, EX
+    return EX_t, EF_t
 
 
 # def xpw(A):
@@ -121,10 +109,10 @@ def xpw(E, L=2e-3, χ3=1.59e-22, n0=1.4704, theta=np.pi/4, c=3e8):
 #     return A**3, np.unwrap(np.angle(A**3))
 
 def compute_xpw(AF, φF):
-    EF = ift(AF * np.exp(1j * φF))
-    EX_t, _ = xpw(EF)
+    EF_t = ift(AF * np.exp(1j*φF))   # FW(t)
+    EX_t, _ = xpw(EF_t)              # XPW(t)
     EXω = ft(EX_t)
-    φX = np.unwrap(np.angle(EXω))
+    φX  = np.unwrap(np.angle(EXω))
     return EXω, φX
 
 
