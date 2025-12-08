@@ -1,10 +1,12 @@
 import numpy as np
 import matplotlib.pyplot as plt
 from scipy.optimize import minimize
+import pandas as pd
 from scipy.interpolate import interp1d
 from numpy.fft import fft, ifft, fftshift, ifftshift
 import tools
 from matplotlib.widgets import Slider
+import os
 
 # Scaling
 nm = 1e-9
@@ -14,6 +16,7 @@ cm = 1e-2
 m = 1
 
 s = 1
+μs = 1e-6
 fs = 1e-15
 
 c = 3e8 * (m / s)
@@ -167,7 +170,7 @@ def cost_function(params, ω, ω0, τ_delay, A0_ref, I_measured, φ_prior=None, 
 
 # ---------- Run simulation ----------
 
-simulation = True
+simulation = False
 debug = True
 
 if simulation:
@@ -204,21 +207,100 @@ if simulation:
     A0_ref_true = AFω.max()
     I = forward(ω, ω0, true_params, τ_delay, A0_ref_true, AA=AAω)
 
-    # Quick check of simulated interferogram
     fig, ax = plt.subplots(1)
     ax.plot(ω, I / I.max())
     ax.set_title("Simulated I(ω)")
     plt.show()
 
 else:
-    pass
+    df = pd.read_excel("dark.xlsx")
+    λ = df["Wavelength"].to_numpy()
+    
+    xpw_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\xpw_bulk"
+    measurement_bulk_dir = r"data\xpw_fringes\2025-12-03\micrometer_631_bulk"
+    dark_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\dark_bulk"
+
+    z = (float(measurement_bulk_dir.split("\\")[-1].split("_")[1]) * 1e-2) * mm
+    τ_delay = 2 * z / c
+
+    xpw_data = np.zeros_like(λ)
+    count = 0
+    for file in os.listdir(xpw_bulk_dir):
+        data = tools.read_txt(xpw_bulk_dir + "\\" + file)
+        
+        IX = data["intensity"]
+        IX[IX < 0] = 0.0
+        xpw_data = xpw_data + IX.to_numpy()
+
+        count = count + 1
+
+    xpw_data = xpw_data / count
+
+    I = np.zeros_like(λ)
+    count = 0
+    for file in os.listdir(measurement_bulk_dir):
+        data = tools.read_txt(measurement_bulk_dir + "\\" + file)
+
+        i = data["intensity"]
+        i[i < 0] = 0.0
+
+        I = I + i.to_numpy()
+        count = count + 1
+
+    I = I / count
+
+    dark = np.zeros_like(λ)
+    count = 0
+    for file in os.listdir(dark_bulk_dir):
+        data = tools.read_txt(dark_bulk_dir + "\\" + file)
+
+        d = data["intensity"]
+        d[d < 0] = 0.0
+
+        dark = dark + d.to_numpy()
+        count = count + 1
+
+    dark = dark / count
+    I = I - dark
+    xpw_data = xpw_data - dark
+
+    fig, ax = plt.subplots(1, 2, figsize = (12, 8))
+    ax[0].plot(λ, xpw_data / xpw_data.max())
+    ax[0].set_xlabel(r"$\lambda$")
+    ax[0].set_ylabel(r"$I_X$")
+
+    ω, xpw_data = grid_transform(λ, xpw_data)
+   
+    ax[1].plot(ω, xpw_data / xpw_data.max())
+    ax[1].set_xlabel(r"$\omega$")
+    ax[1].set_ylabel(r"$I_X$")
+    plt.tight_layout()
+    plt.show()
+
+
+    fig, ax = plt.subplots(1, 2, figsize = (12, 8))
+    ax[0].plot(λ, I / I.max())
+    ax[0].set_xlabel(r"$\lambda$")
+    ax[0].set_ylabel(r"I")
+
+    ω, I = grid_transform(λ, I)
+   
+    ax[1].plot(ω, I / I.max())
+    ax[1].set_xlabel(r"$\omega$")
+    ax[1].set_ylabel(r"I")
+    plt.tight_layout()
+    plt.show()
+
+    print()
+
+
 
 
 # Extract AC peak
 I_hat = tools.ft(I)
 t = tools.ω2t(ω)
-low = 60 * fs
-high = 800 * fs
+low = 50 * μs
+high = 250 * μs
 
 I_abs = np.abs(I_hat / I_hat.max())
 fig, ax = plt.subplots(1)
@@ -239,10 +321,25 @@ I_chop = tools.ift(I_hat_chop)
 AFω0 = np.abs(I_chop)
 φ0 = np.unwrap(np.angle(I_chop))
 
-ids = AFω0 > 0.05 * AFω0.max()
+fig, ax = plt.subplots(1, 2)
+ax[0].plot(ω, AFω0)
+ax[0].set_xlabel(r"$\omega$")
+ax[0].set_ylabel("A")
+ax[1].plot(ω, φ0)
+ax[1].set_xlabel(r"$\omega$")
+ax[1].set_ylabel(r"$\phi$")
+
+plt.tight_layout()
+plt.show()
+
+# James, center of mass solver for omega 0
+ω0 = 2.35e6
+
+ids = AFω0 > 0.1 * AFω0.max()
 ω = ω[ids]
 AFω0 = AFω0[ids]
 φ0 = φ0[ids] + ω * τ_delay
+I = I[ids]
 N_sample = len(φ0)
 φ0 = φ0 - φ0[N_sample // 2]
 
@@ -253,7 +350,7 @@ if simulation:
 A0_ref = AFω0.max()
 
 # Forms initial guess
-x0 = initial_guess(AFω0, φ0, ω, ω0, order=3)
+x0 = initial_guess(AFω0, φ0, ω, ω0, order=6)
 
 if debug:
     fig, ax = plt.subplots(1, 2)

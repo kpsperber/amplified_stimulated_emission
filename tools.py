@@ -5,7 +5,7 @@ from scipy import integrate
 from scipy.integrate import simpson
 from mpl_toolkits.mplot3d import Axes3D
 from scipy.interpolate import RegularGridInterpolator
-import numpy as np
+import pandas as pd
 import numpy.fft as nfft
 from scipy.interpolate import RegularGridInterpolator
 from scipy.signal import savgol_filter
