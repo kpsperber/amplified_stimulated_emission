@@ -220,3 +220,55 @@ def read_txt(filepath, as_numpy=False, negs_to_zero=False):
         print('Returning 2D numpy array. a[0,:] are indexes and a[1,:] are values')
         return np.stack((idx, vals), axis=0)
     return data
+
+def centroid_calc_np_1d(data, coord_array):
+    '''
+    Computes the centroid of the input dataset in 1 dimension through a weighted average sum.
+
+    Args:
+        data (np.array): Input data to find the centroid of.
+        coord_array (np.array): Array of coordinate values corresponding to the data points.
+    
+    Returns:
+        centroid (np.array): Array of 1 value containing the centroid
+    '''
+    centroid = np.sum(data * coord_array) / np.sum(data)
+    return centroid
+
+def polynomial_peak_fit_np(data, coord_array, window_size=1):
+    '''
+    Finds the subpixel peak of a 1D dataset by fitting a quadratic polynomial.
+
+    Args:
+        data (np.array): Input data to find the peak of.
+        coord_array (np.array): Array of coordinate values corresponding to the data points.
+        window_size (int): Number of points on either side of the coarse peak to include in the fit. Default is 1.
+
+    Returns:
+        fx_peak (float): Subpixel peak position.
+    '''
+
+    coarse_peak_idx = np.argmax(data)
+    x0 = coord_array[coarse_peak_idx]
+    window = data[max(0, coarse_peak_idx - window_size): min(len(data), coarse_peak_idx + window_size + 1)] # Ensure can't go out of bounds
+    xs_rel = x0 - coord_array[max(0, coarse_peak_idx - window_size): min(len(data), coarse_peak_idx + window_size + 1)]
+
+    # Fit quadratic: f(x) = ax² + bx + c
+    X = np.stack([
+        xs_rel.ravel()**2,
+        xs_rel.ravel(),
+        np.ones_like(xs_rel.ravel())
+    ], axis=1)
+    
+    coeffs, _, _, _ = np.linalg.lstsq(X, window, rcond=None)
+    a, b, c = coeffs
+
+    # Subpixel peak from derivative = 0
+    if 2*a == 0:
+        return x0  # fallback
+    dx = b / (2 * a)
+    
+    if np.iscomplex(dx): dx = dx.real # Enforce real in case complex output
+
+    fx_peak = x0 + dx
+    return fx_peak
