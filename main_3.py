@@ -22,7 +22,7 @@ fs = 1e-15
 
 c = 3e8 * (m / s)
 
-simulation = True
+simulation = False
 
 df = pd.read_excel("dark.xlsx")
 λ = df["Wavelength"].to_numpy() * nm
@@ -56,9 +56,19 @@ if simulation:
     EXω_true = 25.0 * tools.ft(EX_true)
 
     I = np.abs(EFω_true + EXω_true * np.exp(1j * ω * τ_delay)) ** 2 + AAω ** 2
-    I_noise = I + 1e-3 * (np.random.rand(I.size) - 0.5)
+    I_noise = I + 1e-1 * (np.random.rand(I.size) - 0.5)
 
-    
+    ω0 = tools.centroid_calc_np_1d(I_noise, ω)
+    gauss = np.exp(-((ω - ω0)/(2 * 2e14))**10)
+
+    fig, ax = plt.subplots(1)
+    ax.plot(ω, I_noise / I_noise.max())
+    ax.plot(ω, gauss)
+
+    plt.show()
+
+
+    I_noise = I_noise * gauss
 
     IAF = np.abs(EFω_true) ** 2 + np.abs(AAω) ** 2
 
@@ -73,7 +83,7 @@ if simulation:
 else:
     # Read in files
     xpw_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\xpw_bulk"
-    measurement_bulk_dir = r"data\xpw_fringes\2025-12-03\micrometer_631_bulk"
+    measurement_bulk_dir = r"data\xpw_fringes\2025-12-03\micrometer_637_bulk"
     dark_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\dark_bulk"
     ref_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\reference_arm_bulk"
 
@@ -157,12 +167,17 @@ else:
     ax[0].set_ylabel(r"I")
 
     ω, I = tools.grid_transform(λ, I)
+    ω0 = tools.centroid_calc_np_1d(I, ω)
+    gauss = np.exp(-((ω - ω0)/(2 * 2e14))**10)
 
     ax[1].plot(ω, I / I.max())
+    ax[1].plot(ω, gauss)
     ax[1].set_xlabel(r"$\omega$")
     ax[1].set_ylabel(r"I")
     plt.tight_layout()
     plt.show()
+
+    I = I * gauss
 
 # Extract AC peak
 
@@ -173,10 +188,10 @@ else:
     I_hat = tools.ft(I)
 
 t = tools.ω2t(ω)
-low_AC = 60 * fs
-high_AC = 250 * fs
-low_DC = -60 * fs
-high_DC = 60 * fs
+low_AC = 378 * fs
+high_AC = 850 * fs
+low_DC = -200 * fs
+high_DC = 200 * fs
 
 I_abs = np.abs(I_hat / I_hat.max())
 fig, ax = plt.subplots(1)
@@ -199,18 +214,52 @@ I_hat_AC[mask_AC] = I_hat[mask_AC]
 I_hat_DC[mask_DC] = I_hat[mask_DC]
 
 I_hat_AC = tools.recenter(I_hat_AC, t)
-I_hat_DC = tools.recenter(I_hat_DC, t)
+
+ω0 = tools.centroid_calc_np_1d(np.abs(I_hat_AC), ω)
+gauss = np.exp(-((ω - ω0)/(2 * 0.5e14))**10)
+
+
+fig, ax = plt.subplots(1)
+ax.plot(ω, np.abs(I_hat_AC) / np.abs(I_hat_AC).max())
+ax.plot(ω, gauss)
+
+plt.show()
+
+I_hat_AC = I_hat_AC * gauss
+I_hat_AC = gaussian_filter1d(I_hat_AC, sigma = 3)
+
+ω0 = tools.centroid_calc_np_1d(np.abs(I_hat_DC), ω)
+gauss = np.exp(-((ω - ω0)/(4 * 3.5e14))**10)
+
+I_hat_DC = I_hat_DC * gauss
 
 f = tools.ift(I_hat_AC)
 S0 = tools.ift(I_hat_DC)
 
-ids = np.where(f > 1e-5 * f.max())
+# f = f * gauss
+
+ω0 = tools.centroid_calc_np_1d(np.abs(S0), ω)
+gauss = np.ones_like(np.exp(-((ω - ω0)/(6 * 2e14))**10))
+
+fig, ax = plt.subplots(1)
+ax.plot(ω, np.abs(S0))
+
+plt.show()
+
+# S0 = S0 * gauss
+
+
+
+ids = np.where(f > 1e-6 * f.max())
 f = f[ids]
 S0 = S0[ids]
 ω = ω[ids]
 I = I[ids]
 IAF = IAF[ids]
-AAω = AAω[ids]
+
+if simulation:
+    AAω = AAω[ids]
+
 AXω_known = AXω_known[ids]
 
 
@@ -270,7 +319,17 @@ for k in range(max_iter):
     AFω = AFω_new
 
 # AFω = (np.abs(f).max() / np.abs(AXω_known).max()) * (AFω / AFω.max())
- 
+ids = np.where(I > 1e-2 * I.max())
+f = f[ids]
+S0 = S0[ids]
+ω = ω[ids]
+I = I[ids]
+IAF = IAF[ids]
+AXω_known = AXω_known[ids] 
+φ_xpw = φ_xpw[ids]
+AFω = AFω[ids]
+φ_in = φ_in[ids]
+
 E_in_final  = AFω * np.exp(1j * φ_in)
 E_xpw_final = AXω_known * np.exp(1j * φ_xpw)
 
