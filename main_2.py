@@ -102,47 +102,66 @@ def phase_poly_guess(φ, ω, ω0, fs=1e-15, order=3):
 
 
 def initial_guess(A, φ, ω, ω0, order=3):
-    """
-    Build initial parameter vector:
-        params = [log_sigma, φ0, φ1, φ2]  (length = 1 + order)
-    Amplitude peak A0_ref is handled separately outside.
-    """
-    params0 = np.zeros(1 + order)
+    # params = [log_sigma, log_kxpw, δτ_fs, φ_rel, φ0..φ_{order-1}]
+    params0 = np.zeros(4 + order)
 
     _, log_sigma_est = gaussian_moment_guess(A, ω)
-    params0[0] = log_sigma_est
+    params0[0] = log_sigma_est   # log_sigma
+    params0[1] = 0.0             # log_kxpw → k_xpw ≈ 1
+    params0[2] = 0.0             # δτ_fs initial ≈ 0
+    params0[3] = 0.0             # φ_rel initial ≈ 0
 
     phase_params = phase_poly_guess(φ, ω, ω0, order=order)
-    params0[1:] = phase_params
+    params0[4:] = phase_params
 
     return params0
 
+
+
 # ---------- Forward model & cost ----------
 
-def forward(ω, ω0, params, τ_delay, A0_ref, AA = None, scale = 0.3):
+def forward(ω, ω0, params, τ_delay, A0_ref,
+            AXω_known=None, AA=None):
     """
-    params = [log_sigma, φ0, φ1, φ2]
+    params = [log_sigma, log_kxpw, δτ_fs, φ_rel, φ0, φ1, ..., φ_{order-1}]
     """
-    log_sigma = params[0]
-    phase_params = params[1:]
+    log_sigma    = params[0]
+    log_kxpw     = params[1]
+    δτ_fs        = params[2]
+    φ_rel        = params[3]
+    phase_params = params[4:]
 
-    Aω = amplitude_gauss(ω, ω0, log_sigma, A0_ref)
-    φω = phase(ω, ω0, phase_params)
+    k_xpw = np.exp(log_kxpw)
+    δτ    = δτ_fs * fs
+    τ_eff = τ_delay + δτ
+
+    # Fundamental amplitude & phase
+    Aω  = amplitude_gauss(ω, ω0, log_sigma, A0_ref)
+    φω  = phase(ω, ω0, phase_params)
 
     EFω = Aω * np.exp(1j * φω)
-    EXω = xpw(Aω, φω)  # XPW field
-    EXω = EXω * np.exp(1j * ω * τ_delay)
+
+    # XPW field: measured amplitude * fitted scale
+    if AXω_known is not None:
+        AXω = AXω_known * k_xpw
+    else:
+        AXω = (Aω**3) * k_xpw
+
+    # include 3φF, the effective delay, and a constant relative phase
+    EXω = AXω * np.exp(1j * (3 * φω + ω * τ_eff + φ_rel))
 
     if AA is not None:
-        I = np.abs(EFω + EXω)**2 + np.abs(AA) ** 2
+        I = np.abs(EFω + EXω)**2 + np.abs(AA)**2
     else:
         I = np.abs(EFω + EXω)**2
 
     return I
 
-def cost_function(params, ω, ω0, τ_delay, A0_ref, I_measured, φ_prior=None, w_I=1.0, w_φ=1e-3):
 
-    I_sim = forward(ω, ω0, params, τ_delay, A0_ref)
+
+def cost_function(params, ω, ω0, τ_delay, A0_ref, I_measured, AXω_known=None, φ_prior=None, w_I=1.0, w_φ=1e-3):
+
+    I_sim = forward(ω, ω0, params, τ_delay, A0_ref, AXω_known)
     
     I_sim_normalize = I_sim / (np.max(I_sim) + 1e-20)
     I_measured_normalize = I_measured / np.max(I_measured)
@@ -154,6 +173,11 @@ def cost_function(params, ω, ω0, τ_delay, A0_ref, I_measured, φ_prior=None, 
     resid = I_measured_normalize - α * I_sim_normalize
     C_I = np.sum(resid**2)
 
+    I_simn = α * I_sim_normalize
+    dI_meas = np.gradient(I_measured_normalize, ω)
+    dI_sim  = np.gradient(I_simn, ω)
+    C_grad  = np.sum((dI_meas - dI_sim)**2)
+
     # Phase-prior term (optional)
     C_φ = 0.0
     if φ_prior is not None:
@@ -164,7 +188,8 @@ def cost_function(params, ω, ω0, τ_delay, A0_ref, I_measured, φ_prior=None, 
         # match the same gauge as φ_prior
         C_φ = np.sum((φ_model - φ_prior)**2) / len(ω)
 
-    return w_I * C_I + w_φ * C_φ
+    β = 1.5
+    return w_I * C_I + w_φ * C_φ + β * C_grad
 
 
 
@@ -214,7 +239,7 @@ if simulation:
 
 else:
     df = pd.read_excel("dark.xlsx")
-    λ = df["Wavelength"].to_numpy()
+    λ = df["Wavelength"].to_numpy() * nm
     
     xpw_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\xpw_bulk"
     measurement_bulk_dir = r"data\xpw_fringes\2025-12-03\micrometer_631_bulk"
@@ -270,6 +295,7 @@ else:
     ax[0].set_ylabel(r"$I_X$")
 
     ω, xpw_data = grid_transform(λ, xpw_data)
+    AXω_known = np.sqrt(np.clip(xpw_data, 0.0, None))
    
     ax[1].plot(ω, xpw_data / xpw_data.max())
     ax[1].set_xlabel(r"$\omega$")
@@ -299,8 +325,8 @@ else:
 # Extract AC peak
 I_hat = tools.ft(I)
 t = tools.ω2t(ω)
-low = 50 * μs
-high = 250 * μs
+low = 50 * fs
+high = 250 * fs
 
 I_abs = np.abs(I_hat / I_hat.max())
 fig, ax = plt.subplots(1)
@@ -318,14 +344,14 @@ I_hat_chop[mask] = I_hat[mask]
 I_hat_chop = tools.recenter(I_hat_chop, t)
 
 I_chop = tools.ift(I_hat_chop)
-AFω0 = np.abs(I_chop)
-φ0 = np.unwrap(np.angle(I_chop))
+AFω0 = np.abs(I_chop) ** 0.25
+φAC = np.unwrap(np.angle(I_chop))
 
 fig, ax = plt.subplots(1, 2)
 ax[0].plot(ω, AFω0)
 ax[0].set_xlabel(r"$\omega$")
 ax[0].set_ylabel("A")
-ax[1].plot(ω, φ0)
+ax[1].plot(ω, φAC)
 ax[1].set_xlabel(r"$\omega$")
 ax[1].set_ylabel(r"$\phi$")
 
@@ -333,15 +359,23 @@ plt.tight_layout()
 plt.show()
 
 # James, center of mass solver for omega 0
-ω0 = 2.35e6
+ω0 = 2.34e15
 
 ids = AFω0 > 0.1 * AFω0.max()
 ω = ω[ids]
 AFω0 = AFω0[ids]
-φ0 = φ0[ids] + ω * τ_delay
+φAC = φAC[ids]
+
+# correct for delay in the AC phase:
+φ_AC_corr = φAC - ω * τ_delay
+
+# fundamental phase (up to a constant offset):
+N_sample = len(φAC)
+φF = -0.5 * φ_AC_corr
+φF = φF - φF[N_sample // 2]   # gauge fix
 I = I[ids]
-N_sample = len(φ0)
-φ0 = φ0 - φ0[N_sample // 2]
+
+AXω_known = AXω_known[ids]
 
 if simulation:
     I = I[ids]
@@ -350,7 +384,7 @@ if simulation:
 A0_ref = AFω0.max()
 
 # Forms initial guess
-x0 = initial_guess(AFω0, φ0, ω, ω0, order=6)
+x0 = initial_guess(AFω0, φF, ω, ω0, order=9)
 
 if debug:
     fig, ax = plt.subplots(1, 2)
@@ -365,8 +399,8 @@ if debug:
     ax[0].legend()
 
     # Compare phase
-    ax[1].plot(ω, φ0, label = "Measured")
-    ax[1].plot(ω, phase(ω, ω0, x0[1:]), "--", label="phase guess")
+    ax[1].plot(ω, φF, label = "Measured")
+    ax[1].plot(ω, phase(ω, ω0, x0[4:]), "--", label="phase guess")
     ax[1].set_xlabel(r"$\omega$")
     ax[1].set_ylabel(r"$\phi(\omega)$")
     ax[1].legend()
@@ -374,20 +408,34 @@ if debug:
     plt.tight_layout()
     plt.show()
 
+EF0 = AFω0 * np.exp(1j * φF)
+EX0 = AXω_known * np.exp(1j * ω * τ_delay) * np.exp(2j * φF)
+
+I0 = np.abs(EF0 + EX0) ** 2
+
+fig, ax = plt.subplots(1)
+ax.plot(ω, I0 / I0.max())
+ax.plot(ω, I / I.max(), "--")
+
+plt.show()
+
 # ---------- Final optimization ----------
 
 res = minimize(
     cost_function,
     x0,
-    args=(ω, ω0, τ_delay, A0_ref, I, φ0, 1.0, 0),
-    method="Nelder-Mead", 
-    options={"maxiter": 1000, "disp": True}
+    args=(ω, ω0, τ_delay, A0_ref, np.abs(I), AXω_known, None, 2.0, 0.1),
+    method="Nelder-Mead",
+    options={"maxiter": 100000, "disp": True}
 )
 
-x = res.x
+x  = res.x
 log_sigma_fit = x[0]
-phase_params_fit = x[1:]
-x0 = x
+log_kxpw_fit  = x[1]
+δτ_fs_fit     = x[2]
+φ_rel_fit     = x[3]
+phase_params_fit = x[4:]
+
 
 # --- Rebuild coherent fields from fit and extract ASE ---
 
@@ -399,9 +447,12 @@ if simulation:
 
 Aω_fit = amplitude_gauss(ω, ω0, log_sigma_fit, A0_ref)
 φ_fit  = phase(ω, ω0, phase_params_fit, fs=fs)
+k_xpw_fit = np.exp(log_kxpw_fit)
+τ_eff_fit = τ_delay + δτ_fs_fit * fs
 
 EFω_fit = Aω_fit * np.exp(1j * φ_fit)
-EXω_fit = xpw(Aω_fit, φ_fit) * np.exp(1j * ω * τ_delay)
+EXω_fit = (k_xpw_fit * AXω_known
+           * np.exp(1j * (3 * φ_fit + ω * τ_eff_fit + φ_rel_fit)))
 
 I_coh = np.abs(EFω_fit + EXω_fit)**2
 
@@ -411,7 +462,12 @@ denom = np.dot(I_coh, I_coh) + 1e-20
 
 I_coh_scaled = α_coh * I_coh
 I_ASE = I - I_coh_scaled
-A_ASE = np.sqrt(I_ASE)
+A_ASE = np.sqrt(np.abs(I_ASE))
+
+fig, ax = plt.subplots(1)
+ax.plot(ω, I / I.max())
+ax.plot(ω, I_coh_scaled / I_coh_scaled.max(), "--")
+plt.show()
 
 fig, ax = plt.subplots(1, 2)
 ax[0].plot(ω, Aω_fit)

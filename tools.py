@@ -9,6 +9,7 @@ import pandas as pd
 import numpy.fft as nfft
 from scipy.interpolate import RegularGridInterpolator
 from scipy.signal import savgol_filter
+from scipy.interpolate import interp1d
 
 
 # Defines scaling
@@ -220,3 +221,18 @@ def read_txt(filepath, as_numpy=False, negs_to_zero=False):
         print('Returning 2D numpy array. a[0,:] are indexes and a[1,:] are values')
         return np.stack((idx, vals), axis=0)
     return data
+
+def grid_transform(λ, Aλ):
+    ω_min, ω_max = 2 * np.pi * c / λ.max(), 2 * np.pi * c / λ.min()
+    N = len(λ)
+    ω = np.linspace(ω_min, ω_max, N)
+    
+    λ_target = 2 * np.pi * c / ω
+    F = interp1d(λ, Aλ, kind = "cubic", fill_value = 0.0)
+
+    Aω = F(λ_target)
+    return ω, Aω
+
+def get_amplitude(S, f):
+    return 0.5 * (np.sqrt(S + 2 * np.abs(f)) - np.sqrt(S - 2 * np.abs(f)))
+
