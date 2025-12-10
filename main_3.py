@@ -22,7 +22,7 @@ fs = 1e-15
 
 c = 3e8 * (m / s)
 
-simulation = False
+simulation = True
 
 df = pd.read_excel("dark.xlsx")
 λ = df["Wavelength"].to_numpy() * nm
@@ -35,9 +35,9 @@ if simulation:
     Δλ = 75 * nm
 
     ω0 = 2 * np.pi * c / λ0
-    Δω = 2 * np.pi * c / Δλ
+    Δω = 2 * np.pi * c * Δλ / λ0 ** 2
 
-    τ_delay = 100 * fs
+    τ_delay = 500 * fs
     
     AF = np.exp(-(λ - λ0)**2 / Δλ**2)
     AA = 0.50 * AF
@@ -48,15 +48,20 @@ if simulation:
     t = (np.arange(N) - N // 2) * dt
     dω = ω[1] - ω[0]
     ω_fft = (np.arange(N) - N // 2) * dω   # FFT-conjugate grid
-    φ0 = np.zeros_like(ω)
+    #φ0 = np.zeros_like(ω)
+
+    ω0 = tools.centroid_calc_np_1d(AFω, ω)
+    φ0 = np.zeros_like((10 * fs) ** 3 * (ω - ω0) ** 3)
 
     EFω_true = AFω * np.exp(1j * φ0)
     EF  = tools.ift(EFω_true)
     EX_true  = EF * np.abs(EF)**2
-    EXω_true = 25.0 * tools.ft(EX_true)
+    EXω_true = tools.ft(EX_true)
+    EXω_true = 0.3 * EXω_true / (np.abs(EXω_true).max() * AFω.max())
+    AXω_known = np.abs(EXω_true)
 
-    I = np.abs(EFω_true + EXω_true * np.exp(1j * ω * τ_delay)) ** 2 + AAω ** 2
-    I_noise = I + 1e-1 * (np.random.rand(I.size) - 0.5)
+    I = np.abs(AFω) ** 2 + np.abs(AAω) ** 2 * 0 + np.abs(AXω_known) ** 2 + 2 * AFω * AXω_known * np.cos(ω * τ_delay + (φ0 - np.unwrap(np.angle(EXω_true))))
+    I_noise = I + 1e-6 * (np.random.rand(I.size) - 0.5)
 
     ω0 = tools.centroid_calc_np_1d(I_noise, ω)
     gauss = np.exp(-((ω - ω0)/(2 * 2e14))**10)
@@ -128,7 +133,6 @@ else:
         count = count + 1
 
     IAF = IAF / count
-    _, IAF = tools.grid_transform(λ, IAF)
 
     dark = np.zeros_like(λ)
     count = 0
@@ -160,6 +164,18 @@ else:
     plt.tight_layout()
     plt.show()
 
+    fig, ax = plt.subplots(1, 2, figsize = (8, 6))
+    ax[0].plot(λ, IAF / IAF.max())
+    ax[0].set_xlabel(r"$\lambda$")
+    ax[0].set_ylabel(r"IAF")
+
+    _, IAF = tools.grid_transform(λ, IAF)
+
+    ax[1].plot(ω, IAF / IAF.max())
+    ax[1].set_xlabel(r"$\omega$")
+    ax[1].set_ylabel(r"IAF")
+    plt.tight_layout()
+    plt.show()
 
     fig, ax = plt.subplots(1, 2, figsize = (8, 6))
     ax[0].plot(λ, I / I.max())
@@ -171,7 +187,7 @@ else:
     gauss = np.exp(-((ω - ω0)/(2 * 2e14))**10)
 
     ax[1].plot(ω, I / I.max())
-    ax[1].plot(ω, gauss)
+    # ax[1].plot(ω, gauss)
     ax[1].set_xlabel(r"$\omega$")
     ax[1].set_ylabel(r"I")
     plt.tight_layout()
@@ -215,20 +231,36 @@ I_hat_DC[mask_DC] = I_hat[mask_DC]
 
 I_hat_AC = tools.recenter(I_hat_AC, t)
 
+
+ids = np.where(np.abs(I) > 1e-2 * np.abs(I).max())
+test_omega = ω[ids]
+test_AC = tools.ift(I_hat_AC)
+angle = np.unwrap(np.angle(test_AC))
+
 ω0 = tools.centroid_calc_np_1d(np.abs(I_hat_AC), ω)
 gauss = np.exp(-((ω - ω0)/(2 * 0.5e14))**10)
 
 
-fig, ax = plt.subplots(1)
-ax.plot(ω, np.abs(I_hat_AC) / np.abs(I_hat_AC).max())
-ax.plot(ω, gauss)
+# fig, ax = plt.subplots(1)
+# ax.plot(ω, np.abs(I_hat_AC) / np.abs(I_hat_AC).max())
+# ax.plot(ω, gauss)
 
-plt.show()
+# plt.show()
 
 I_hat_AC = I_hat_AC * gauss
-I_hat_AC = gaussian_filter1d(I_hat_AC, sigma = 3)
 
-ω0 = tools.centroid_calc_np_1d(np.abs(I_hat_DC), ω)
+# fig, ax = plt.subplots(1)
+# ax.plot(ω, np.abs(I_hat_AC) / np.abs(I_hat_AC).max())
+# plt.show()
+
+
+# I_hat_AC = gaussian_filter1d(I_hat_AC, sigma = 1)
+
+fig, ax = plt.subplots(1)
+ax.plot(ω, np.abs(I_hat_AC) / np.abs(I_hat_AC).max())
+plt.show()
+
+# ω0 = tools.centroid_calc_np_1d(np.abs(I_hat_DC), ω)
 gauss = np.exp(-((ω - ω0)/(4 * 3.5e14))**10)
 
 I_hat_DC = I_hat_DC * gauss
@@ -238,8 +270,8 @@ S0 = tools.ift(I_hat_DC)
 
 # f = f * gauss
 
-ω0 = tools.centroid_calc_np_1d(np.abs(S0), ω)
-gauss = np.ones_like(np.exp(-((ω - ω0)/(6 * 2e14))**10))
+# ω0 = tools.centroid_calc_np_1d(np.abs(S0), ω)
+# gauss = np.ones_like(np.exp(-((ω - ω0)/(6 * 2e14))**10))
 
 fig, ax = plt.subplots(1)
 ax.plot(ω, np.abs(S0))
@@ -250,115 +282,152 @@ plt.show()
 
 
 
-ids = np.where(f > 1e-6 * f.max())
-f = f[ids]
-S0 = S0[ids]
-ω = ω[ids]
-I = I[ids]
-IAF = IAF[ids]
+# ids = np.where(f > 1e-6 * f.max())
+# f = f[ids]
+# S0 = S0[ids]
+# ω = ω[ids]
+# I = I[ids]
+# IAF = IAF[ids]
 
-if simulation:
-    AAω = AAω[ids]
+# if simulation:
+#     AAω = AAω[ids]
 
-AXω_known = AXω_known[ids]
+# AXω_known = AXω_known[ids]
 
 
 
 AFω = tools.get_amplitude(S0, f)
-arg_f = np.unwrap(np.angle(f))
+Δφ = np.unwrap(np.angle(f))
 abs_f = np.abs(f)
 
 AFω = tools.get_amplitude(S0, f)
 φ_in = np.unwrap(np.angle(f)).copy()
 φ_xpw = np.zeros_like(φ_in)
 
+# phase = np.exp(1j * np.unwrap(np.angle(f)))
+# phase_F = phase.copy()
+# phase_X = np.exp(1j * np.zeros_like(phase_F))
+
 max_iter = 10000
-tol_amp = 1
-tol_phase = 1e-4
+tol_amp = 1e-6
+tol_phase = 1e-6
 alpha = 0.3
+ε = 1e-10
 
 for k in range(max_iter):
+
     # Fundamental in ω and t
     E_in_ω = AFω * np.exp(1j * φ_in)
+    # E_in_ω = AFω * phase_F
     E_in_t = tools.ift(E_in_ω)
 
     # XPW generation (time-domain cubic)
     E_xpw_t_sim = E_in_t * np.abs(E_in_t) ** 2
     E_xpw_ω_sim = tools.ft(E_xpw_t_sim)
+    φ_xpw = np.angle(E_xpw_ω_sim)
 
     # Use simulated XPW phase + measured XPW amplitude
-    φ_xpw = np.unwrap(np.angle(E_xpw_ω_sim))
-    E_xpw_ω = AXω_known * np.exp(1j * φ_xpw)
+    denom = AXω_known + ε
 
-    Δφ = np.unwrap(np.angle(f))
+    # phase_X = E_xpw_ω_sim / denom
+    # phase_X = phase_X / np.abs(phase_X)
+    # E_xpw_ω = AXω_known * phase_X
+
     φ_in_new = Δφ - φ_xpw
     φ_in_new -= φ_in_new[len(φ_in_new) // 2]
 
-    eps = 1e-3 * AXω_known.max()
-    denom = np.maximum(AXω_known, eps)
-
+    # phase_F_new = phase * np.conj(phase_X)
+    # phase_F_new = phase_F_new / np.abs(phase_F_new)
+    
     AFω_target = np.abs(f) / denom
     AFω_new = alpha * AFω_target + (1 - alpha) * AFω
 
     damp = np.sum((np.abs(AFω) - np.abs(AFω_new)) ** 2) / len(AFω)
-    dphi = np.sum((φ_in - φ_in_new) ** 2) / len(φ_in)
+    # dphase = np.sum(np.unwrap(np.angle(phase_F * np.conj(phase_F_new))) ** 2) / len(phase_F)
+    dphase = np.sum((φ_in_new - φ_in) ** 2) / len(φ_in)
 
-    if k % 100 == 0:
+    if k % 500 == 0:
         print("=" * 50)
         print(f"Iteration {k}")
         print("=" * 50)
-        print(f"φ Error: {dphi}")
+        print(f"φ Error: {dphase}")
         print(f"A Error: {damp}")
         print()
 
-    if dphi < tol_phase and damp < tol_amp:
+    if dphase < tol_phase and damp < tol_amp:
         print(f"Converged in {k+1} iterations")
         break
 
     φ_in = φ_in_new
+    
+    # phase_F = phase_F_new
     AFω = AFω_new
 
 # AFω = (np.abs(f).max() / np.abs(AXω_known).max()) * (AFω / AFω.max())
-ids = np.where(I > 1e-2 * I.max())
+
+ids = np.where(np.abs(I) > 1e-2 * np.abs(I).max())
 f = f[ids]
 S0 = S0[ids]
 ω = ω[ids]
 I = I[ids]
 IAF = IAF[ids]
 AXω_known = AXω_known[ids] 
-φ_xpw = φ_xpw[ids]
+φ_xpw = np.unwrap(φ_xpw[ids])
+# phase_X = phase_X[ids]
 AFω = AFω[ids]
-φ_in = φ_in[ids]
+# phase_F = phase_F[ids]
+φ_in = np.unwrap(φ_in[ids])
 
-E_in_final  = AFω * np.exp(1j * φ_in)
+E_F_final  = AFω * np.exp(1j * φ_in)
 E_xpw_final = AXω_known * np.exp(1j * φ_xpw)
+
+# E_F_final  = AFω * phase_F
+# E_xpw_final = AXω_known * phase_X
 
 E_xpw_delayed = E_xpw_final * np.exp(1j * ω * τ_delay)
 
-I_sim = np.abs(E_in_final + E_xpw_delayed)**2
+I_sim = np.abs(E_F_final + E_xpw_delayed)**2
 
-fig, ax = plt.subplots(1)
-ax.plot(ω, I, label = "Measured Intensity")
-ax.plot(ω, I_sim, label = "Computational Intensity")
-ax.set_xlabel(r"$\omega$")
-ax.set_ylabel("I")
+fig, ax = plt.subplots(1, 2)
+ax[0].plot(ω, I, label = "Measured Intensity")
+ax[0].plot(ω, I_sim, label = "Computational Intensity")
+ax[0].set_xlabel(r"$\omega$")
+ax[0].set_ylabel("I")
+ax[0].legend()
 
-plt.legend()
-plt.show()
-
-fig, ax = plt.subplots(1)
+# φ_F = np.unwrap(np.angle(phase_F))
 
 if simulation:
-    ax.plot(ω, np.abs(AAω) ** 2, label = "Real")
-    ax.plot(ω, np.abs(IAF - AFω ** 2), "--", label = "Measured")
+    ax[1].plot(ω, φ0[ids])
+    ax[1].plot(ω, φ_in, "--")
+
+else:
+    ax[1].plot(ω, φ_in)
+
+ax[1].set_xlabel(r"$\omega$")
+ax[1].set_ylabel(r"$\phi$")
+
+
+plt.show()
+
+IAA_comp = np.abs(IAF - AFω ** 2)
+λ_sample, IAA_comp_λ = tools.grid_transform(ω, IAA_comp)
+
+if simulation:
+    fig, ax = plt.subplots(1)
+    ax.plot(ω, np.abs(AAω[ids]) ** 2 / (np.abs(AAω) ** 2).max(), label = "Real")
+    ax.plot(ω, IAA_comp / IAA_comp.max(), "--", label = "Measured")
     ax.set_xlabel(r"$\omega$")
     ax.set_ylabel(r"I")
     plt.legend()
 
 else:
-    ax.plot(ω, np.abs(IAF - AFω ** 2))
-    ax.set_xlabel(r"$\omega$")
-    ax.set_ylabel(r"I")
+    fig, ax = plt.subplots(1, 2)
+    ax[0].plot(ω, IAA_comp)
+    ax[0].set_xlabel(r"$\omega$")
+    ax[0].set_ylabel(r"I")
+    ax[1].plot(λ_sample, IAA_comp_λ)
+    ax[1].set_xlabel(r"$\lambda$")
 
 plt.show()
 
