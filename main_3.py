@@ -18,7 +18,10 @@ m = 1
 
 s = 1
 μs = 1e-6
+ps = 1e-12
 fs = 1e-15
+
+THz = 1e15
 
 c = 3e8 * (m / s)
 
@@ -88,9 +91,11 @@ if simulation:
 else:
     # Read in files
     xpw_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\xpw_bulk"
-    measurement_bulk_dir = r"data\xpw_fringes\2025-12-03\micrometer_637_bulk"
+    measurement_bulk_dir = r"data\xpw_fringes\2025-12-03\micrometer_631_bulk"
     dark_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\dark_bulk"
     ref_bulk_dir = r"data\xpw_fringes\2025-12-03\callibration_images\reference_arm_bulk"
+    results_dir = r"results"
+    os.makedirs(results_dir, exist_ok = True)
 
     z = (float(measurement_bulk_dir.split("\\")[-1].split("_")[1]) * 1e-2) * mm
     τ_delay = 2 * z / c
@@ -390,49 +395,59 @@ E_xpw_delayed = E_xpw_final * np.exp(1j * ω * τ_delay)
 
 I_sim = np.abs(E_F_final + E_xpw_delayed)**2
 
-fig, ax = plt.subplots(1, 2)
-ax[0].plot(ω, I, label = "Measured Intensity")
-ax[0].plot(ω, I_sim, label = "Computational Intensity")
-ax[0].set_xlabel(r"$\omega$")
-ax[0].set_ylabel("I")
-ax[0].legend()
+fig, ax = plt.subplots(1, 2, figsize=(10, 6))
 
-# φ_F = np.unwrap(np.angle(phase_F))
+ax[0].set_title("Retrieved Spectrogram")
+ax[0].plot(ω / THz, I, label="Measured")
+ax[0].plot(ω / THz, I_sim, label="Retrieved")
+ax[0].set_xlabel(r"$\omega$ (THz)")
+ax[0].set_ylabel("I (Counts)")
 
+# Legend outside
+ax[0].legend(loc = "upper left")
+
+# --- SECOND SUBPLOT ---
 if simulation:
     ax[1].plot(ω, φ0[ids])
     ax[1].plot(ω, φ_in, "--")
-
 else:
-    ax[1].plot(ω, φ_in)
+    ax[1].plot(ω / THz, φ_in - φ_in[len(φ_in) // 2], label = "Fundamental")
+    ax[1].plot(ω / THz, φ_xpw - φ_xpw[len(φ_xpw) // 2], label = "XPW")
 
-ax[1].set_xlabel(r"$\omega$")
-ax[1].set_ylabel(r"$\phi$")
+ax[1].set_title(r"Retrieved Phase")
+ax[1].set_xlabel(r"$\omega$ (THz)")
+ax[1].set_ylabel(r"$\phi$ (rad)")
+ax[1].legend(loc = "upper right")
 
+plt.subplots_adjust(right=0.9, wspace=0.3)
 
+plt.savefig(results_dir + f"\\retrieval_{round(τ_delay / ps, 2)}.png")
 plt.show()
+
 
 IAA_comp = np.abs(IAF - AFω ** 2)
 λ_sample, IAA_comp_λ = tools.grid_transform(ω, IAA_comp)
 
 if simulation:
     fig, ax = plt.subplots(1)
-    ax.plot(ω, np.abs(AAω[ids]) ** 2 / (np.abs(AAω) ** 2).max(), label = "Real")
-    ax.plot(ω, IAA_comp / IAA_comp.max(), "--", label = "Measured")
-    ax.set_xlabel(r"$\omega$")
-    ax.set_ylabel(r"I")
+    ax.plot(ω / THz, np.abs(AAω[ids]) ** 2 / (np.abs(AAω) ** 2).max(), label = "Real")
+    ax.plot(ω / THz, IAA_comp / IAA_comp.max(), "--", label = "Measured")
+    ax.set_xlabel(r"$\omega$ (THz)")
+    ax.set_ylabel(r"I (Counts)")
     plt.legend()
 
 else:
     fig, ax = plt.subplots(1, 2)
-    ax[0].plot(ω, IAA_comp)
-    ax[0].set_xlabel(r"$\omega$")
-    ax[0].set_ylabel(r"I")
-    ax[1].plot(λ_sample, IAA_comp_λ)
-    ax[1].set_xlabel(r"$\lambda$")
+    fig.suptitle(rf"ASE Intensity Spectrum $\tau$ = {round(τ_delay / ps, 2)} ps")
+    fig.supylabel("I (counts)")
+    ax[0].plot(ω / THz, IAA_comp)
+    ax[0].set_xlabel(r"$\omega$ (THz)")
+    ax[1].plot(λ_sample / nm, IAA_comp_λ)
+    ax[1].set_xlabel(r"$\lambda$ (nm)")
+
+plt.tight_layout()
+plt.savefig(results_dir + f"\\ASE Spectrum_{round(τ_delay / ps, 2)}.png")
 
 plt.show()
-
-
 print()
 

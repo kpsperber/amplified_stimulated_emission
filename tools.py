@@ -286,10 +286,19 @@ def read_txt(filepath, as_numpy=False, negs_to_zero=False):
 
 def grid_transform(λ, Aλ):
     ω_min, ω_max = 2 * np.pi * c / λ.max(), 2 * np.pi * c / λ.min()
+
+    if ω_min > ω_max:
+        ω_max, ω_min = ω_min, ω_max
+
     N = len(λ)
     ω = np.linspace(ω_min, ω_max, N)
     
     λ_target = 2 * np.pi * c / ω
+    if λ_target.min() < λ.min():
+        id = np.where(λ_target == λ_target.min())
+        λ_target[id] = λ.min()
+
+
     F = interp1d(λ, Aλ, kind = "cubic", fill_value = 0.0)
 
     Aω = F(λ_target)
