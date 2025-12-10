@@ -41,6 +41,68 @@ def ift(Ahat):
     """Centered 1D inverse FFT."""
     return nfft.fftshift(nfft.ifft(nfft.ifftshift(Ahat)))
 
+def ft_norm(a, dx, mode='den'):
+    '''
+    Normalized centered 1D FFT. Can normalize for density or amplitude. Density mode preserves energy integral (approximated
+        by sum |A|^2*dk) is preserved. Amplitude mode preserves energy sum |A|^2.
+
+    Args:
+        a (np.array): Input data array.
+        dx (float): Spacing in the original domain.
+        mode (str): Normalization mode, 'den' for density or 'amp' for amplitude. Default is 'den'.
+
+    Returns:
+        np.array: Normalized Fourier transform of the input data.
+    '''
+    ft_raw = ft(a)
+    if mode == 'den':
+        return ft_raw * dx
+    elif mode == 'amp':
+        return ft_raw / np.sqrt(len(a))
+    else:
+        raise ValueError("Invalid mode. Choose 'den' or 'amp'.")
+
+def ift_norm(a, dx, mode='den'):
+    '''
+    Normalized centered 1D inverse FFT. Can normalize for density or amplitude. Density mode preserves energy integral (approximated
+        by sum |A|^2*dx) is preserved. Amplitude mode preserves energy sum |A|^2.
+    '''
+    ift_raw = ift(a)
+    if mode == 'den':
+        return ift_raw / dx
+    elif mode == 'amp':
+        return ift_raw * np.sqrt(len(a))
+    else:
+        raise ValueError("Invalid mode. Choose 'den' or 'amp'.")
+    
+def parseval_check(data, transform, dx, dk, mode='den'):
+    '''
+    Checks Parseval's theorem for a given dataset and its transform.
+
+    Args:
+        data (np.array): Original data array.
+        transform (np.array): Transformed data array (e.g., Fourier transform of data).
+        dx (float): Spacing in the original domain.
+        dk (float): Spacing in the transform domain.
+        mode (str): 'den' for density normalization, 'amp' for amplitude normalization. Default is 'den'.
+    
+    Returns:
+        bool: True if Parseval's theorem holds within a tolerance, False otherwise.
+    '''
+    energy_data = np.sum(np.abs(data)**2)
+    energy_transform = np.sum(np.abs(transform)**2)  # Normalize by length for FFT
+
+    if mode == 'den':
+        energy_data = energy_data * dx
+        energy_transform = energy_transform * dk
+
+    print(f'Energy in data domain: {energy_data}')
+    print(f'Energy in transform domain: {energy_transform}')
+    match = np.isclose(energy_data, energy_transform)
+    print('Energies Match?:', match)
+
+    return match
+
 def ω2t(omega):
     """
     Given uniform angular-frequency grid omega (rad/s),
@@ -287,3 +349,33 @@ def polynomial_peak_fit_np(data, coord_array, window_size=1):
 
     fx_peak = x0 + dx
     return fx_peak
+
+def ac_dc_identify(data, coords, dc_radius=10, b_width=None, b_ratio=1):
+    '''
+    Identifies bounding lines to cut out DC and AC peaks. Uses a coarse AC peak for bounds.
+
+    Args:
+        data (np.array): 1D array of intensity data.
+        coords (np.array): 1D array of coordinate values corresponding to the data points.
+        dc_radius (float): Radius in pixels around zero to block out DC peak when searching for AC peak. Default is 10.
+        b_width (float): Half-width of bounding boxes. If None, set to half the distance to AC peak (max size boxes). Default is None.
+        b_ratio (float): Ratio of AC box width to DC box width. Default is 1.
+            - Warning: If b_ratio is too large or too small, boxes may overlap or go out of bounds.
+    '''
+
+    # Identify AC peak after blocking out DC region
+    dx = np.diff(coords)[0]
+    # Block Negative part of signal
+    data = np.where(coords+dx*dc_radius >= 0, data, 0)
+    dc_peak_idx = len(coords) // 2
+    blocked_data = np.where(coords**2 >= (dc_radius*dx)**2, data, np.nan)
+    ac_peak_idx = np.nanargmax(blocked_data)
+
+    # Print boxes to cut DC and AC regions
+    if b_width is None: b_width = (ac_peak_idx - dc_peak_idx) // 2
+    b_width_ac = int(b_width * b_ratio)
+    b_width_dc = int(b_width/b_ratio)
+    b_bounds_dc = (dc_peak_idx-b_width_dc, dc_peak_idx+b_width_dc)
+    b_bounds_ac = (ac_peak_idx - b_width_ac, min(ac_peak_idx + b_width_ac, len(coords)-1)) # Make sure AC box doesn't go out of bounds
+
+    return b_bounds_dc, b_bounds_ac

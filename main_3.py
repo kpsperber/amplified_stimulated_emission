@@ -22,7 +22,7 @@ fs = 1e-15
 
 c = 3e8 * (m / s)
 
-simulation = True
+simulation = False
 
 df = pd.read_excel("dark.xlsx")
 λ = df["Wavelength"].to_numpy() * nm
@@ -54,9 +54,9 @@ if simulation:
     φ0 = np.zeros_like((10 * fs) ** 3 * (ω - ω0) ** 3)
 
     EFω_true = AFω * np.exp(1j * φ0)
-    EF  = tools.ift(EFω_true)
+    EF  = tools.ft_norm(EFω_true, dx=dω)
     EX_true  = EF * np.abs(EF)**2
-    EXω_true = tools.ft(EX_true)
+    EXω_true = tools.ift_norm(EX_true, dx=dω)
     EXω_true = 0.3 * EXω_true / (np.abs(EXω_true).max() * AFω.max())
     AXω_known = np.abs(EXω_true)
 
@@ -156,6 +156,7 @@ else:
     ax[0].set_ylabel(r"$I_X$")
 
     ω, xpw_data = tools.grid_transform(λ, xpw_data)
+    dω = ω[1] - ω[0]
     AXω_known = np.sqrt(np.clip(xpw_data, 0.0, None))
 
     ax[1].plot(ω, xpw_data / xpw_data.max())
@@ -198,31 +199,32 @@ else:
 # Extract AC peak
 
 if simulation:
-    I_hat = tools.ft(I_noise)
+    I_hat = tools.ft_norm(I_noise, dx=dω)
 
 else:
-    I_hat = tools.ft(I)
+    I_hat = tools.ft_norm(I, dx=dω)
 
 t = tools.ω2t(ω)
-low_AC = 378 * fs
-high_AC = 850 * fs
-low_DC = -200 * fs
-high_DC = 200 * fs
+(low_DC_idx, high_DC_idx), (low_AC_idx, high_AC_idx) = tools.ac_dc_identify(I_hat, t, dc_radius=50)
+#low_AC = 378 * fs
+#high_AC = 850 * fs
+#low_DC = -200 * fs
+#high_DC = 200 * fs
 
 I_abs = np.abs(I_hat / I_hat.max())
 fig, ax = plt.subplots(1)
 ax.plot(t, I_abs)
-ax.vlines([low_AC, high_AC], ymin=0, ymax=1.0, color = "red")
-ax.vlines([low_DC, high_DC], ls = "--", ymin=0, ymax=1.0, color = "green")
+ax.vlines([t[low_AC_idx], t[high_AC_idx]], ymin=0, ymax=1.0, color = "red")
+ax.vlines([t[low_DC_idx], t[high_DC_idx]], ls = "--", ymin=0, ymax=1.0, color = "green")
 ax.set_title("|I(t)|")
 plt.show()
 
-lower_AC = low_AC
-upper_AC = high_AC
-mask_AC = (t >= lower_AC) & (t <= upper_AC)
-lower_DC = low_DC
-upper_DC = high_DC
-mask_DC = (t >= lower_DC) & (t <= upper_DC)
+#lower_AC = low_AC
+#upper_AC = high_AC
+mask_AC = (t >= t[low_AC_idx]) & (t <= t[high_AC_idx])
+#lower_DC = low_DC
+#upper_DC = high_DC
+mask_DC = (t >= t[low_DC_idx]) & (t <= t[high_DC_idx])
 
 I_hat_AC = np.zeros_like(I_hat)
 I_hat_DC = np.zeros_like(I_hat)
@@ -234,7 +236,7 @@ I_hat_AC = tools.recenter(I_hat_AC, t)
 
 ids = np.where(np.abs(I) > 1e-2 * np.abs(I).max())
 test_omega = ω[ids]
-test_AC = tools.ift(I_hat_AC)
+test_AC = tools.ift_norm(I_hat_AC, dx=dω)
 angle = np.unwrap(np.angle(test_AC))
 
 ω0 = tools.centroid_calc_np_1d(np.abs(I_hat_AC), ω)
@@ -265,8 +267,8 @@ gauss = np.exp(-((ω - ω0)/(4 * 3.5e14))**10)
 
 I_hat_DC = I_hat_DC * gauss
 
-f = tools.ift(I_hat_AC)
-S0 = tools.ift(I_hat_DC)
+f = tools.ift_norm(I_hat_AC, dx=dω)
+S0 = tools.ift_norm(I_hat_DC, dx=dω)
 
 # f = f * gauss
 
@@ -319,11 +321,11 @@ for k in range(max_iter):
     # Fundamental in ω and t
     E_in_ω = AFω * np.exp(1j * φ_in)
     # E_in_ω = AFω * phase_F
-    E_in_t = tools.ift(E_in_ω)
+    E_in_t = tools.ift_norm(E_in_ω, dx=dω)
 
     # XPW generation (time-domain cubic)
     E_xpw_t_sim = E_in_t * np.abs(E_in_t) ** 2
-    E_xpw_ω_sim = tools.ft(E_xpw_t_sim)
+    E_xpw_ω_sim = tools.ft_norm(E_xpw_t_sim, dx=dω)
     φ_xpw = np.angle(E_xpw_ω_sim)
 
     # Use simulated XPW phase + measured XPW amplitude
